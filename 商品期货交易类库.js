@@ -1,10 +1,39 @@
 /*
-策略出处: https://www.botvs.com/strategy/12961
+策略出处: https://www.fmz.com/strategy/12961
 策略名称: 商品期货交易类库
 策略作者: Zero
 策略描述:
 
 商品期货交易类库
+
+
+> CTA库
+* 实盘会自动把指数映射到主力连续
+* 会自动处理移仓
+* 回测可以指定映射比如 rb000/rb888 就是把rb指数交易映射到主力连续
+* 也可以映射到别的合约, 比如rb000/MA888 就是看rb指数的K线来交易MA主力连续
+
+```
+function main() {
+    $.CTA("rb000,M000", function(r, mp) {
+        if (r.length < 20) {
+            return
+        }
+        var emaSlow = TA.EMA(r, 20)
+        var emaFast = TA.EMA(r, 5)
+        var cross = $.Cross(emaFast, emaSlow);
+        if (mp <= 0 && cross > 2) {
+            Log("金叉周期", cross, "当前持仓", mp);
+            return 1
+        } else if (mp >= 0 && cross < -2) {
+            Log("死叉周期", cross, "当前持仓", mp);
+            return -1
+        }
+    });
+}
+```
+
+> 类库调用举例
 ```
 function main() {
     var p = $.NewPositionManager();
@@ -30,16 +59,23 @@ function main() {
 }
 ```
 
-`不断完善中...`
 
+参数               默认值    描述
+---------------  -----  ------------
+Interval         500    失败重试间隔(毫秒)
+SlideTick        true   滑价点数(整数)
+RiskControl      false  开启风控
+MaxTrade         100    工作日最多交易交易次数
+MaxTradeAmount   1000   单笔最多下单量
+CTAShowPosition  true   在状态栏显示持仓信息
+SyncInterval     5      账户与持仓同步周期(秒)
+*/
 
-参数              默认值    描述
---------------  -----  -----------
-Interval        500    失败重试间隔(毫秒)
-SlideTick       true   滑价点数(整数)
-RiskControl     false  开启风控
-MaxTrade        100    工作日最多交易交易次数
-MaxTradeAmount  1000   单笔最多下单量
+/*backtest
+start: 2018-01-15 09:00:00
+end: 2018-01-30 00:00:00
+period: 1d
+exchanges: [{"eid":"Futures_CTP","currency":"FUTURES"}]
 */
 
 var __orderCount = 0
@@ -128,6 +164,9 @@ function Open(e, contractType, direction, opAmount) {
             }
         }
         var insDetail = _C(e.SetContractType, contractType);
+        if (insDetail.MaxLimitOrderVolume == 0) {
+            insDetail.MaxLimitOrderVolume = 50
+        }
         //Log("初始持仓", initAmount, "当前持仓", positionNow, "需要加仓", needOpen);
         if (needOpen < insDetail.MinLimitOrderVolume) {
             break;
@@ -177,37 +216,69 @@ function Open(e, contractType, direction, opAmount) {
     return ret;
 }
 
-function Cover(e, contractType) {
+function Cover(e, contractType, lots) {
     var insDetail = _C(e.SetContractType, contractType);
+    if (insDetail.MaxLimitOrderVolume == 0) {
+        insDetail.MaxLimitOrderVolume = 50
+    }
+    var initAmount = 0;
+    var firstLoop = true;
     while (true) {
         var n = 0;
-        var opAmount = 0;
+        var total = 0;
         var positions = _C(e.GetPosition);
+        var nowAmount = 0;
+        for (var i = 0; i < positions.length; i++) {
+            if (positions[i].ContractType != contractType) {
+                continue;
+            }
+            nowAmount += positions[i].Amount;
+        }
+        if (firstLoop) {
+            initAmount = nowAmount;
+            firstLoop = false;
+        }
+        var amountChange = initAmount - nowAmount;
+        if (typeof(lots) == 'number' && amountChange >= lots) {
+            break;
+        }
+
         for (var i = 0; i < positions.length; i++) {
             if (positions[i].ContractType != contractType) {
                 continue;
             }
             var amount = Math.min(insDetail.MaxLimitOrderVolume, positions[i].Amount);
             var depth;
+            var opAmount = 0;
+            var opPrice = 0;
             if (positions[i].Type == PD_LONG || positions[i].Type == PD_LONG_YD) {
                 depth = _C(e.GetDepth);
                 opAmount = Math.min(amount, depth.Bids[0].Amount);
-                if (!CanTrade(opAmount)) {
-                    return;
-                }
-                e.SetDirection(positions[i].Type == PD_LONG ? "closebuy_today" : "closebuy");
-                
-                e.Sell(depth.Bids[0].Price - (insDetail.PriceTick * SlideTick), opAmount, contractType, positions[i].Type == PD_LONG ? "平今" : "平昨", 'Bid', depth.Bids[0]);
-                n++;
+                opPrice = depth.Bids[0].Price - (insDetail.PriceTick * SlideTick);
             } else if (positions[i].Type == PD_SHORT || positions[i].Type == PD_SHORT_YD) {
                 depth = _C(e.GetDepth);
                 opAmount = Math.min(amount, depth.Asks[0].Amount);
+                opPrice = depth.Asks[0].Price + (insDetail.PriceTick * SlideTick);
+            }
+            if (typeof(lots) === 'number') {
+                opAmount = Math.min(opAmount, lots - (initAmount - nowAmount));
+            }
+            if (opAmount > 0) {
                 if (!CanTrade(opAmount)) {
                     return;
                 }
-                e.SetDirection(positions[i].Type == PD_SHORT ? "closesell_today" : "closesell");
-                e.Buy(depth.Asks[0].Price + (insDetail.PriceTick * SlideTick), opAmount, contractType, positions[i].Type == PD_SHORT ? "平今" : "平昨", 'Ask', depth.Asks[0]);
-                n++;
+                if (positions[i].Type == PD_LONG || positions[i].Type == PD_LONG_YD) {
+                    e.SetDirection(positions[i].Type == PD_LONG ? "closebuy_today" : "closebuy");
+                    e.Sell(opPrice, opAmount, contractType, positions[i].Type == PD_LONG ? "平今" : "平昨", 'Bid', depth.Bids[0]);
+                } else {
+                    e.SetDirection(positions[i].Type == PD_SHORT ? "closesell_today" : "closesell");
+                    e.Buy(opPrice, opAmount, contractType, positions[i].Type == PD_SHORT ? "平今" : "平昨", 'Ask', depth.Asks[0]);
+                }
+                n++
+            }
+            // break to check always
+            if (typeof(lots) === 'number') {
+                break;
             }
         }
         if (n === 0) {
@@ -289,7 +360,10 @@ function AccountToTable(jsStr, title) {
         rows: []
     };
     try {
-        var fields = JSON.parse(jsStr);
+        var files = null;
+        if (typeof(jsStr) === 'string') {
+            fields = JSON.parse(jsStr);
+        }
         for (var k in fields) {
             if (k == 'AccountID' || k == 'BrokerID') {
                 continue
@@ -349,11 +423,11 @@ var PositionManager = (function() {
         return Open(this.e, contractType, PD_SHORT, shares);
     };
 
-    PositionManager.prototype.Cover = function(contractType) {
+    PositionManager.prototype.Cover = function(contractType, lots) {
         if (!this.account) {
             this.account = _C(this.e.GetAccount);
         }
-        return Cover(this.e, contractType);
+        return Cover(this.e, contractType, lots);
     };
     PositionManager.prototype.CoverAll = function() {
         if (!this.account) {
@@ -367,14 +441,16 @@ var PositionManager = (function() {
             for (var i = 0; i < positions.length; i++) {
                 // Cover Hedge Position First
                 if (positions[i].ContractType.indexOf('&') != -1) {
+                    Log("开始平掉", positions[i]);
                     Cover(this.e, positions[i].ContractType)
-                    Sleep(1000)
+                    Sleep(Interval)
                 }
             }
             for (var i = 0; i < positions.length; i++) {
                 if (positions[i].ContractType.indexOf('&') == -1) {
+                    Log("开始平掉", positions[i]);
                     Cover(this.e, positions[i].ContractType)
-                    Sleep(1000)
+                    Sleep(Interval)
                 }
             }
         }
@@ -391,6 +467,19 @@ $.NewPositionManager = function(e) {
     return new PositionManager(e);
 };
 
+function ins2product(symbol) {
+    symbol = symbol.replace('SPD ', '').replace('SP ', '');
+    var shortName = "";
+    for (var i = 0; i < symbol.length; i++) {
+        var ch = symbol.charCodeAt(i);
+        if (ch >= 48 && ch <= 57) {
+            break;
+        }
+        shortName += symbol[i].toUpperCase();
+    }
+    return shortName
+}
+
 // Via: http://mt.sohu.com/20160429/n446860150.shtml
 $.IsTrading = function(symbol) {
     var now = new Date();
@@ -401,15 +490,8 @@ $.IsTrading = function(symbol) {
     if (day === 0 || (day === 6 && (hour > 2 || hour == 2 && minute > 30))) {
         return false;
     }
-    symbol = symbol.replace('SPD ', '').replace('SP ', '');
-    var p, i, shortName = "";
-    for (i = 0; i < symbol.length; i++) {
-        var ch = symbol.charCodeAt(i);
-        if (ch >= 48 && ch <= 57) {
-            break;
-        }
-        shortName += symbol[i].toUpperCase();
-    }
+    var shortName = ins2product(symbol);
+    var p = null;
 
     var period = [
         [9, 0, 10, 15],
@@ -440,7 +522,7 @@ $.IsTrading = function(symbol) {
 
     var nperiod = [
         [
-            ['AU', 'AG'],
+            ['AU', 'AG', 'sc'],
             [21, 0, 02, 30]
         ],
         [
@@ -456,7 +538,7 @@ $.IsTrading = function(symbol) {
             [21, 0, 23, 30]
         ],
         [
-            ['SR', 'CF', 'RM', 'MA', 'TA', 'ZC', 'FG', 'IO'],
+            ['SR', 'CF', 'RM', 'MA', 'TA', 'ZC', 'FG', 'OI'],
             [21, 0, 23, 30]
         ],
     ];
@@ -514,7 +596,7 @@ $.NewTaskQueue = function(onTaskFinish) {
             arg: typeof(onFinish) !== 'undefined' ? arg : undefined,
             onFinish: typeof(onFinish) == 'undefined' ? arg : onFinish
         }
-        
+
         switch (task.action) {
             case "buy":
                 task.desc = task.symbol + " 开多仓, 数量 " + task.amount
@@ -557,6 +639,9 @@ $.NewTaskQueue = function(onTaskFinish) {
         var insDetail = task.e.SetContractType(task.symbol);
         if (!insDetail) {
             return self.ERR_SET_SYMBOL;
+        }
+        if (insDetail.MaxLimitOrderVolume == 0) {
+            insDetail.MaxLimitOrderVolume = 50
         }
         var ret = null;
         var isCover = task.action != "buy" && task.action != "sell";
@@ -608,7 +693,11 @@ $.NewTaskQueue = function(onTaskFinish) {
             }
             var remain = task.amount;
             if (isCover && !pos) {
-                pos = {Amount:0, Cost: 0, Price: 0}
+                pos = {
+                    Amount: 0,
+                    Cost: 0,
+                    Price: 0
+                }
             }
             if (pos) {
                 task.dealAmount = pos.Amount - task.preAmount;
@@ -618,7 +707,7 @@ $.NewTaskQueue = function(onTaskFinish) {
                 remain = parseInt(task.amount - task.dealAmount);
                 if (remain <= 0 || task.retry >= task.maxRetry) {
                     ret = {
-                        price: (pos.Cost - task.preCost) / (pos.Amount - task.preAmount),
+                        price: task.dealAmount == 0 ? 0 : ((pos.Cost - task.preCost) / (pos.Amount - task.preAmount)),
                         amount: (pos.Amount - task.preAmount),
                         position: pos
                     };
@@ -654,13 +743,13 @@ $.NewTaskQueue = function(onTaskFinish) {
                         task.e.SetDirection(positions[i].Type == PD_LONG ? "closebuy_today" : "closebuy");
                         amount = Math.min(amount, depth.Bids[0].Amount)
                         orderId = task.e.Sell(_N(depth.Bids[0].Price - slidePrice, 2), amount, task.symbol, positions[i].Type == PD_LONG ? "平今" : "平昨", 'Bid', depth.Bids[0]);
+                        remain -= amount;
                     } else if (task.action == "closesell" && (positions[i].Type == PD_SHORT || positions[i].Type == PD_SHORT_YD)) {
                         task.e.SetDirection(positions[i].Type == PD_SHORT ? "closesell_today" : "closesell");
                         amount = Math.min(amount, depth.Asks[0].Amount)
                         orderId = task.e.Buy(_N(depth.Asks[0].Price + slidePrice, 2), amount, task.symbol, positions[i].Type == PD_SHORT ? "平今" : "平昨", 'Ask', depth.Asks[0]);
+                        remain -= amount;
                     }
-                    // assume order is success insert
-                    remain -= amount;
                 }
             } else {
                 if (task.action == "buy") {
@@ -691,16 +780,31 @@ $.NewTaskQueue = function(onTaskFinish) {
 
     self.poll = function() {
         var processed = 0
-        _.each(self.tasks, function(task) {
-            if (!task.finished) {
-                processed++
-                self.pollTask(task)
+        if (self.tasks.length > 0) {
+            _.each(self.tasks, function(task) {
+                if (!task.finished) {
+                    processed++
+                    self.pollTask(task)
+                }
+            })
+            if (processed == 0) {
+                self.tasks = []
             }
-        })
-        if (processed == 0) {
-            self.tasks = []
         }
         return processed
+    }
+
+    self.hasTask = function(symbol) {
+        if (typeof(symbol) !== 'string') {
+            return self.tasks.length > 0
+        }
+
+        for (var i = 0; i < self.tasks.length; i++) {
+            if (self.tasks[i].symbol == symbol && !self.tasks[i].finished) {
+                return true
+            }
+        }
+        return false
     }
 
     self.size = function() {
@@ -712,7 +816,301 @@ $.NewTaskQueue = function(onTaskFinish) {
 
 $.AccountToTable = AccountToTable;
 
+// 返回上穿的周期数. 正数为上穿周数, 负数表示下穿的周数, 0指当前价格一样
+$.Cross = function(arr1, arr2) {
+    if (arr1.length !== arr2.length) {
+        throw "array length not equal";
+    }
+    var n = 0;
+    for (var i = arr1.length - 1; i >= 0; i--) {
+        if (typeof(arr1[i]) !== 'number' || typeof(arr2[i]) !== 'number') {
+            break;
+        }
+        if (arr1[i] < arr2[i]) {
+            if (n > 0) {
+                break;
+            }
+            n--;
+        } else if (arr1[i] > arr2[i]) {
+            if (n < 0) {
+                break;
+            }
+            n++;
+        } else {
+            break;
+        }
+    }
+    return n;
+};
+
+/*
+onTick(r, mp, symbol):
+    r为K线, mp为当前品种持仓数量, 正数指多仓, 负数指空仓, 0则不持仓, symbol指品种名称
+    返回值如为n: 
+        n = 0 : 指全部平仓(不管当前持多持空)
+        n > 0 : 如果当前持多仓，则加n个多仓, 如果当前为空仓则平n个空仓,如果n大于当前持仓, 则反手开多仓
+        n < 0 : 如果当前持空仓，则加n个空仓, 如果当前为多仓则平n个多仓,如果-n大于当前持仓, 则反手开空仓
+        无返回值表示什么也不做
+*/
+$.CTA = function(contractType, onTick, interval) {
+    SetErrorFilter("login|ready|初始化")
+    if (typeof(interval) !== 'number') {
+        interval = 500
+    }
+    exchange.IO("mode", 0)
+    var lastUpdate = 0
+    var e = exchange
+    var symbols = contractType.split(',');
+    var holds = {}
+    var tblAccount = {};
+    var findChartSymbol = function(ct) {
+        var product = ins2product(ct)
+        for (var i = 0; i < symbols.length; i++) {
+            var tmp = symbols[i].split('/')
+            if (ins2product(tmp[tmp.length - 1]) == product) {
+                return tmp[0]
+            }
+        }
+        return null
+    }
+    var refreshHold = function(qSize) {
+        if (typeof(qSize) === 'undefined') {
+            qSize = 0
+        }
+        while (!e.IO("status")) {
+            LogStatus(_D(), "Not connect")
+            Sleep(1000)
+        }
+
+        _.each(symbols, function(ins) {
+            var tmp = ins.split('/')
+            if (tmp.length == 2) {
+                holds[tmp[0]] = {
+                    price: 0,
+                    value: 0,
+                    amount: 0,
+                    profit: 0,
+                    symbol: tmp[1]
+                }
+            } else {
+                holds[ins] = {
+                    price: 0,
+                    value: 0,
+                    amount: 0,
+                    profit: 0,
+                    symbol: ins
+                }
+            }
+        });
+        var positions = _C(e.GetPosition);
+        _.each(positions, function(pos) {
+            var mapCT = findChartSymbol(pos.ContractType)
+            if (!mapCT) {
+                return
+            }
+            var hold = holds[mapCT]
+            if (typeof(hold) == 'undefined') {
+                return
+            }
+            if (pos.Type == PD_LONG || pos.Type == PD_LONG_YD) {
+                if (hold.amount < 0 && qSize == 0) {
+                    throw "不能同时持有多仓空仓"
+                }
+                hold.amount += pos.Amount
+            } else {
+                if (hold.amount > 0 && qSize == 0) {
+                    throw "不能同时持有多仓空仓"
+                }
+                hold.amount -= pos.Amount
+            }
+            hold.value += pos.Price * pos.Amount
+            hold.profit += pos.Profit
+            if (hold.amount != 0) {
+                hold.price = _N(hold.value / Math.abs(hold.amount))
+            }
+        })
+        var account = _C(exchange.GetAccount)
+        if (CTAShowPosition) {
+            var tblPosition = {
+                type: 'table',
+                title: '持仓状态',
+                cols: ['品种', '方向', '均价', '数量', '浮动盈亏'],
+                rows: []
+            };
+            _.each(positions, function(pos) {
+                tblPosition.rows.push([pos.ContractType, ((pos.Type == PD_LONG || pos.Type == PD_LONG_YD) ? '多#0000ff' : '空#ff0000'), pos.Price, pos.Amount, pos.Profit])
+            });
+            tblAccount = $.AccountToTable(exchange.GetRawJSON(), "资金信息")
+            LogStatus('`' + JSON.stringify([tblPosition, tblAccount]) + '`\n', '更新于: ' + _D())
+        }
+        lastUpdate = new Date().getTime()
+        return account
+    }
+
+    var account = refreshHold(0)
+    var q = $.NewTaskQueue(function(task, ret) {
+        Log("任务结束", task.desc)
+        account = refreshHold(q.size())
+    })
+    var mainCache = []
+    while (true) {
+        var ts = new Date().getTime()
+        _.each(symbols, function(ins) {
+            var ctChart = ins
+            var ctTrade = ins
+            var tmp = ins.split('/')
+            if (tmp.length == 2) {
+                ctChart = tmp[0]
+                ctTrade = tmp[1]
+            }
+            if (!e.IO("status") || !$.IsTrading(ctChart) || !$.IsTrading(ctTrade) || q.hasTask(ctTrade)) {
+                return
+            }
+            if (typeof(mainCache[ctTrade]) !== 'undefined' && (q.hasTask(mainCache[ctTrade][0]) || q.hasTask(mainCache[ctTrade][0]))) {
+                // 正在移仓
+                return
+            }
+
+            // 先获取行情
+            var c = e.SetContractType(ctChart)
+            if (!c) {
+                return
+            }
+            var r = e.GetRecords()
+            if (!r || r.length == 0) {
+                return
+            }
+
+            // 切换到需要交易的合约上来
+            var insDetail = e.SetContractType(ctTrade)
+            if (!insDetail) {
+                return
+            }
+            var tradeSymbol = insDetail.InstrumentID
+            // 处理主力合约切换, 指数合约在交易时也默认映射到主力合约上
+            if (ctTrade.indexOf('888') !== -1 || ctTrade.indexOf('000') !== -1) {
+                var preMain = ''
+                var isSwitch = false
+                var positions = null;
+                if (typeof(mainCache[ctTrade]) === 'undefined') {
+                    if (!IsVirtual()) {
+                        Log(ctTrade, "当前主力合约为:", tradeSymbol)
+                    }
+                    positions = e.GetPosition()
+                    if (!positions) {
+                        return
+                    }
+                    var product = ins2product(ctTrade);
+                    _.each(positions, function(p) {
+                        if (ins2product(p.ContractType) == product) {
+                            mainCache[ctTrade] = [p.ContractType, p.ContractType];
+                        }
+                    });
+                }
+                if (typeof(mainCache[ctTrade]) !== 'undefined' && mainCache[ctTrade][0] != tradeSymbol) {
+                    preMain = mainCache[ctTrade][0]
+                    Log(ctTrade, "主力合约切换为:", tradeSymbol, "之前为:", preMain, "#ff0000")
+                    // 开始切换
+                    if (!positions) {
+                        positions = e.GetPosition()
+                        if (!positions) {
+                            return
+                        }
+                    }
+                    _.each(positions, function(p) {
+                        if (p.ContractType == preMain) {
+                            var isLong = p.Type == PD_LONG || p.Type == PD_LONG_YD
+                            q.pushTask(e, p.ContractType, (isLong ? "closebuy" : "closesell"), p.Amount, function(task, ret) {
+                                Log("切换合约平仓成功", task.desc, ret)
+                            })
+                            q.pushTask(e, tradeSymbol, (isLong ? "buy" : "sell"), p.Amount, function(task, ret) {
+                                Log("切换合约开仓成功", task.desc, ret)
+                            })
+                            isSwitch = true
+                        }
+                    })
+                }
+                mainCache[ctTrade] = [tradeSymbol, preMain]
+                if (isSwitch) {
+                    // Wait switch compeleted
+                    Log("开始移仓", preMain, "移到", tradeSymbol)
+                    return
+                }
+            }
+
+            var hold = holds[ctChart];
+            var n = onTick({
+                records: r,
+                symbol: tradeSymbol,
+                detail: insDetail,
+                account: account,
+                position: hold,
+                positions: holds
+            })
+            var callBack = null
+            if (typeof(n) == 'object' && typeof(n.length) == 'number' && n.length > 1) {
+                if (typeof(n[1]) == 'function') {
+                    callBack = n[1]
+                }
+                n = n[0]
+            }
+            if (typeof(n) !== 'number') {
+                return
+            }
+            var ret = null
+            if (n > 0) {
+                if (hold.amount < 0) {
+                    q.pushTask(e, tradeSymbol, 'closesell', Math.min(-hold.amount, n), callBack)
+                    n += hold.amount
+                }
+                if (n > 0) {
+                    q.pushTask(e, tradeSymbol, 'buy', n, callBack)
+                }
+            } else if (n < 0) {
+                if (hold.amount > 0) {
+                    q.pushTask(e, tradeSymbol, 'closebuy', Math.min(hold.amount, -n), callBack)
+                    n += hold.amount
+                }
+                if (n < 0) {
+                    q.pushTask(e, tradeSymbol, 'sell', -n, callBack)
+                }
+            } else if (n == 0 && hold.amount != 0) {
+                q.pushTask(e, tradeSymbol, (hold.amount > 0 ? 'closebuy' : 'closesell'), Math.abs(hold.amount), callBack)
+            }
+        })
+        q.poll()
+
+        var now = new Date().getTime()
+        if ((now - lastUpdate) > (SyncInterval * 1000)) {
+            account = refreshHold(q.size())
+        }
+        var delay = interval - (now - ts)
+        if (delay > 0) {
+            Sleep(delay)
+        }
+    }
+}
+
 function main() {
+    // CTA策略框架例子 MA000/rb888 指K线信息看MA000, 下单映射到MA888主力连续上
+    $.CTA("MA000/MA888", function(st) {
+        if (st.records.length < 20) {
+            return
+        }
+        var emaSlow = TA.EMA(st.records, 20)
+        var emaFast = TA.EMA(st.records, 5)
+        var cross = $.Cross(emaFast, emaSlow);
+        LogStatus('可用保证金:', st.account.Balance)
+        if (st.position.amount <= 0 && cross > 2) {
+            Log("金叉周期", cross, "当前持仓", st.position);
+            return st.position.amount < 0 ? 2 : 1
+        } else if (st.position.amount >= 0 && cross < -2) {
+            Log("死叉周期", cross, "当前持仓", st.position);
+            return st.position.amount > 0 ? -2 : -1
+        }
+    });
+
+    /*
     var p = $.NewPositionManager();
     p.OpenShort("MA701", 1);
     p.OpenShort("MA705", 1);
@@ -738,4 +1136,5 @@ function main() {
         q.poll()
         Sleep(1000)
     }
+    */
 }

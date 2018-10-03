@@ -1,5 +1,5 @@
 /*
-策略出处: https://www.botvs.com/strategy/345
+策略出处: https://www.fmz.com/strategy/345
 策略名称: 单平台均衡策略
 策略作者: Zero
 策略描述:
@@ -86,17 +86,17 @@ function onTick() {
     
     if (diff > threshold) {
         var amount = adjustFloat(diff / 2 / ticker.Buy);
-        if (amount < exchange.GetMinStock()) {
+        if (amount < 0.001) {
             return;
         }
-        exchange.Buy(ticker.Buy, amount);
+        exchange.Buy(ticker.Buy*1.1, amount);
         State = STATE_WAIT_BUY;
     } else if (diff <= -threshold) {
         var amount = adjustFloat(Math.abs(diff) / 2 / ticker.Sell);
-        if (amount < exchange.GetMinStock()) {
+        if (amount < 0.001) {
             return;
         }
-        exchange.Sell(ticker.Sell, amount);
+        exchange.Sell(ticker.Sell*0.9, amount);
         State = STATE_WAIT_SELL;
     }
 }

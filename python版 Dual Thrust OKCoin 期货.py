@@ -1,5 +1,5 @@
 '''
-策略出处: https://www.botvs.com/strategy/21856
+策略出处: https://www.fmz.com/strategy/21856
 策略名称: python版 Dual Thrust OKCoin 期货
 策略作者: 小小梦
 策略描述:
@@ -101,9 +101,9 @@ def Trade(currentState,nextState):
         Log(_C(exchange.GetPosition)) # ceshi 
         exchange.SetDirection("closebuy" if currentState == STATE_LONG else "closesell")
         while True:
-            # ID = pfn( (ticker['Last'] - slidePrice) if currentState == STATE_LONG else (ticker['Last'] + slidePrice), AmountOP) # xiugai 限价单
+            ID = pfn( (ticker['Last'] - slidePrice) if currentState == STATE_LONG else (ticker['Last'] + slidePrice), AmountOP) # xiugai 限价单
             # ID = pfn(-1, AmountOP) # xiugai  市价单
-            ID = pfn(AmountOP) # xiugai  市价单
+            # ID = pfn(AmountOP) # xiugai  市价单
             Sleep(Interval)
             Log(exchange.GetOrder(ID)) # xiugai
             ClosePrice = (exchange.GetOrder(ID))['AvgPrice'] # 
@@ -124,9 +124,9 @@ def Trade(currentState,nextState):
     exchange.SetDirection("buy" if nextState == STATE_LONG else "sell") 
     Log(_C(exchange.GetAccount))
     while True:
-        # pfn( (ticker['Last'] + slidePrice) if nextState == STATE_LONG else (ticker['Last'] - slidePrice), AmountOP) # 限价单
+        ID = pfn( (ticker['Last'] + slidePrice) if nextState == STATE_LONG else (ticker['Last'] - slidePrice), AmountOP) # 限价单
         # ID = pfn(-1, AmountOP) # 市价单
-        ID = pfn(AmountOP) # 市价单
+        # ID = pfn(AmountOP) # 市价单
         Sleep(Interval)
         Log(exchange.GetOrder(ID)) # xiugai
         CancelPendingOrders()
@@ -210,7 +210,7 @@ def main():
     exchange.SetContractType(["this_week","next_week","quarter"][ContractTypeIdx]) 
     exchange.SetMarginLevel([10,20][MarginLevelIdx])
     
-    Log("Fee:",exchange.GetFee())
+    # Log("Fee:",exchange.GetFee())
     if len(exchange.GetPosition()) > 0:
         raise Error_AtBeginHasPosition
     CancelPendingOrders()

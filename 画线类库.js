@@ -1,5 +1,5 @@
 /*
-策略出处: https://www.botvs.com/strategy/27293
+策略出处: https://www.fmz.com/strategy/27293
 策略名称: 画线类库
 策略作者: Zero
 策略描述:
@@ -42,6 +42,7 @@ var labelIdx = []
 var preBarTime = 0
 var preFlagTime = 0
 var preDotTime = []
+var hasPrimary = false;
 
 var cfg = {
     tooltip: {
@@ -135,6 +136,7 @@ $.PlotRecords = function(records, title) {
     var seriesIdx = labelIdx["candlestick"];
     if (!chart) {
         chart = Chart(cfg)
+        chart.reset()
     }
     if (typeof(seriesIdx) == 'undefined') {
         cfg.__isStock = true
@@ -142,12 +144,13 @@ $.PlotRecords = function(records, title) {
         series.push({
             type: 'candlestick',
             name: typeof(title) == 'undefined' ? '' : title,
-            id: 'primary',
+            id: (hasPrimary ? 'records_' + seriesIdx : 'primary'),
             data: []
         });
         chart.update(cfg)
         labelIdx["candlestick"] = seriesIdx
     }
+    hasPrimary = true;
     if (typeof(records.Time) !== 'undefined') {
         var Bar = records;
         if (Bar.Time == preBarTime) {
@@ -175,6 +178,7 @@ $.PlotLine = function(label, dot, time) {
             type: 'datetime'
         }
         chart = Chart(cfg)
+        chart.reset()
     }
     var seriesIdx = labelIdx[label]
     if (typeof(seriesIdx) === 'undefined') {
@@ -183,6 +187,7 @@ $.PlotLine = function(label, dot, time) {
         labelIdx[label] = seriesIdx;
         series.push({
             type: 'line',
+            id: (hasPrimary ? 'line_' + seriesIdx : 'primary'),
             yAxis: 0,
             showInLegend: true,
             name: label,
@@ -191,6 +196,7 @@ $.PlotLine = function(label, dot, time) {
                 valueDecimals: 5
             }
         })
+        hasPrimary = true;
         chart.update(cfg)
     }
     if (typeof(time) == 'undefined') {
@@ -211,6 +217,7 @@ $.PlotLine = function(label, dot, time) {
 $.PlotFlag = function(time, text, title, shape, color) {
     if (!chart) {
         chart = Chart(cfg)
+        chart.reset()
     }
     label = "flag";
     var seriesIdx = labelIdx[label]

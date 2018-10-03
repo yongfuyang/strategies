@@ -1,5 +1,5 @@
 /*
-策略出处: https://www.botvs.com/strategy/17289
+策略出处: https://www.fmz.com/strategy/17289
 策略名称: CTP商品期货多品种海龟交易策略
 策略作者: Zero
 策略描述:
@@ -42,6 +42,13 @@ KeepRatio       10                                                              
 按钮     默认值         描述
 -----  ----------  -----
 暂停/继续  __button__  暂停/继续
+*/
+
+/*backtest
+start: 2016-03-01 00:00:00
+end: 2016-12-30 00:00:00
+period: 1h
+exchanges: [{"eid":"Futures_CTP","currency":"FUTURES"}]
 */
 
 var _bot = $.NewPositionManager();
@@ -411,7 +418,10 @@ var TTManager = {
                     } else if (lastPrice < lowest) {
                         opCode = 2;
                     }
-                    obj.leavePeriod = (enterPeriod == obj.enterPeriodA) ? obj.leavePeriodA : obj.leavePeriodB;
+                    if (opCode != 0) {
+                        obj.leavePeriod = (enterPeriod == obj.enterPeriodA) ? obj.leavePeriodA : obj.leavePeriodB;
+                        break;
+                    }
                 }
             } else {
                 var spread = obj.marketPosition > 0 ? (obj.openPrice - lastPrice) : (lastPrice - obj.openPrice);
@@ -423,8 +433,9 @@ var TTManager = {
                     obj.status.st++;
                 } else if (-spread > (IncSpace * obj.N)) {
                     opCode = obj.marketPosition > 0 ? 1 : 2;
-                } else if (records.length > obj.leavePeriod) {
-                    obj.status.leavePrice = TA.Lowest(records, obj.leavePeriod, obj.marketPosition > 0 ? 'Low' : 'High')
+                } 
+                if (opCode == 0 && records.length > obj.leavePeriod) {
+                    obj.status.leavePrice = obj.marketPosition > 0 ? TA.Lowest(records, obj.leavePeriod, 'Low') : TA.Highest(records, obj.leavePeriod, 'High');
                     if ((obj.marketPosition > 0 && lastPrice < obj.status.leavePrice) ||
                         (obj.marketPosition < 0 && lastPrice > obj.status.leavePrice)) {
                         obj.preBreakoutFailure = false;

@@ -1,5 +1,5 @@
 /*
-策略出处: https://www.botvs.com/strategy/8602
+策略出处: https://www.fmz.com/strategy/8602
 策略名称: My-1-价值平均定投策略
 策略作者: Lizza
 策略描述:
@@ -37,8 +37,6 @@ Continue     __button__  继续交易
 MoneyChange  false       纪录资金充值或提现
 StockChange  false       纪录数字货币充值或提现
 */
-
-// botvs@298456fac4241b54943e954fe81f45ee
 
 var initAccount;
 var startTime; //unix timestamp
@@ -269,4 +267,3 @@ function onexit(){
 
     Log('Robot Stopped!#ff0000@');
 }
-

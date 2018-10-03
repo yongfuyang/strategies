@@ -1,5 +1,5 @@
 /*
-策略出处: https://www.botvs.com/strategy/37793
+策略出处: https://www.fmz.com/strategy/37793
 策略名称: 商品期货查看账户详细信息
 策略作者: Zero
 策略描述:
@@ -90,5 +90,9 @@ function main() {
     var raw = exchange.GetRawJSON()
     LogStatus('`' + JSON.stringify(AccountToTable(raw))+'`')
     Log(raw)
-    Log("已经在状态栏以表格形式显示")
+    var obj = JSON.parse(raw)
+    //var rights = _N(obj['Balance'] + obj['PositionProfit']);
+    var rights = _N(obj['PositionProfit'] + obj['CurrMargin'] + obj['Available']);
+    Log("已经在状态栏以表格形式显示", rights)
+
 }
